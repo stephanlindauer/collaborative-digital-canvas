@@ -1,0 +1,107 @@
+<?xml version="1.0" encoding="utf-8"?>
+
+<s:Group xmlns:fx="http://ns.adobe.com/mxml/2009"
+         xmlns:s="library://ns.adobe.com/flex/spark"
+         xmlns:mx="library://ns.adobe.com/flex/mx"
+         width="544"
+         height="416"
+         creationComplete="onCreationComplete()">
+    <fx:Metadata>
+        [Event(name="login", type="events.LoginEvent")]
+    </fx:Metadata>
+    <fx:Script>
+		<![CDATA[
+        import events.LoginEvent;
+
+        import mx.controls.Alert;
+        import mx.events.FlexEvent;
+
+        /**
+         * setting up the listeners and the focus
+         */
+        protected function onCreationComplete():void {
+            username.addEventListener(KeyboardEvent.KEY_DOWN, onKeyDownUN);
+            password.addEventListener(KeyboardEvent.KEY_DOWN, onKeyDownPW);
+            username.setFocus();
+        }
+
+        /**
+         * dispatching event when user logs in so the state can be changed
+         */
+        protected function onLogin(event:Event):void {
+            dispatchEvent(new LoginEvent(LoginEvent.LOGIN, false, false, username.text, password.text));
+        }
+
+        /**
+         * setting the focus right on enter-key down-events in the username field
+         */
+        protected function onKeyDownUN(event:KeyboardEvent):void {
+            if (event.keyCode == 13) {
+                password.setFocus();
+            }
+        }
+
+        /**
+         * setting the focus right on enter-key down-events in the password field
+         * dispatches the login event
+         */
+        protected function onKeyDownPW(event:KeyboardEvent):void {
+            if (event.keyCode == 13) {
+                loginbtn.setFocus();
+                onLogin(event);
+            }
+        }
+
+        /**
+         * setting an error message when login or application dispatches an error
+         */
+        public function setFailText(msg:String):void {
+            errorMsg.label = msg;
+        }
+        ]]>
+	</fx:Script>
+    <fx:Declarations>
+        <!-- Place non-visual elements (e.g., services, value objects) here -->
+    </fx:Declarations>
+    <s:layout>
+        <s:VerticalLayout horizontalAlign="center" paddingTop="40" paddingBottom="40"/>
+    </s:layout>
+    <s:Panel
+
+            width="443"
+            height="251"
+            title="collaborative digital canvas"
+            textAlign="left">
+        <mx:FormHeading x="87"
+                        y="34"
+                        label="please enter username and password"/>
+        <mx:FormHeading x="144"
+                        y="54"
+                        id="errorMsg"
+                        label=""
+                        textAlign="center"
+                        color="#CA1919"
+                        fontStyle="italic"
+                        fontWeight="bold"/>
+        <s:Button x="182"
+                  y="175"
+                  label="Login"
+                  id="loginbtn"
+                  click="onLogin(event)"/>
+        <mx:Form x="87"
+                 y="73"
+                 width="264"
+                 height="82"
+                 id="loginForm">
+            <mx:FormItem label="username:">
+                <s:TextInput id="username"
+                             text="username"/>
+            </mx:FormItem>
+            <mx:FormItem label="password:">
+                <s:TextInput id="password"
+                             text="password"
+                             displayAsPassword="true"/>
+            </mx:FormItem>
+        </mx:Form>
+    </s:Panel>
+</s:Group>

@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="utf-8"?>
+<s:Application xmlns:fx="http://ns.adobe.com/mxml/2009"
+               xmlns:s="library://ns.adobe.com/flex/spark"
+               xmlns:mx="library://ns.adobe.com/flex/mx"
+               minWidth="955"
+               minHeight="600"
+               xmlns:view="view.*"
+               creationComplete="onCreationComplete(event)"
+               backgroundColor="#888888">
+    <s:layout>
+        <s:VerticalLayout horizontalAlign="center"/>
+    </s:layout>
+    <fx:Script>
+		<![CDATA[
+        import events.FailEvent;
+        import events.LoginEvent;
+
+        import mx.events.FlexEvent;
+        import mx.logging.Log;
+
+        private var firstAttempt:Boolean = true;
+
+        /**
+         * sets start-state to login-state
+         */
+        protected function onCreationComplete(Event:FlexEvent):void {
+            currentState = "LoginState";
+        }
+
+        /**
+         * called when user attempts to log in
+         * eventually calls the oncreationcomplete method of the application if
+         * application was reset
+         */
+        protected function onLogin(event:LoginEvent):void {
+            currentState = "ApplicationState";
+            applicationView.username = event.username;
+            applicationView.password = event.password;
+            if (!firstAttempt) {
+                applicationView.onCreationComplete();
+            }
+            event = null;
+            applicationView.addEventListener(FailEvent.FAIL, onFail);
+        }
+
+        /**
+         * called when something ent wrong and application has to be reset
+         */
+        private function onFail(event:FailEvent):void {
+            trace(" fail event " + event);
+            currentState = "LoginState";
+            firstAttempt = false;
+            loginPanel.setFailText(event.kindOfFail);
+        }
+        ]]>
+	</fx:Script>
+    <fx:Declarations>
+        <!-- Place non-visual elements (e.g., services, value objects) here -->
+    </fx:Declarations>
+    <s:states>
+        <s:State name="LoginState"/>
+        <s:State name="ApplicationState"/>
+    </s:states>
+    <view:LoginPanel id="loginPanel"
+                     includeIn="LoginState"
+                     login="onLogin(event)">
+    </view:LoginPanel>
+    <view:Application id="applicationView"
+                      includeIn="ApplicationState">
+    </view:Application>
+</s:Application>

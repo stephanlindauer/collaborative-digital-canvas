@@ -1,0 +1,578 @@
+<?xml version="1.0" encoding="utf-8"?>
+
+<s:BorderContainer xmlns:fx="http://ns.adobe.com/mxml/2009"
+                   xmlns:s="library://ns.adobe.com/flex/spark"
+                   xmlns:mx="library://ns.adobe.com/flex/mx"
+                   width="856"
+                   height="622"
+                   creationComplete="onCreationComplete()"
+                   contentBackgroundColor="#ffffff"
+                   color="#000000"
+                   backgroundColor="#888888"
+                   borderWeight="1"
+                   dropShadowVisible="false"
+                   borderVisible="false">
+    <fx:Script>
+		<![CDATA[
+        ///imports
+        import events.FailEvent;
+        import events.IncomingMessageEvent;
+        import events.OwnVideoFailEvent;
+        import events.OwnVideoWinEvent;
+        import events.StreamOnOffEvent;
+        import events.UserLogInOutEvent;
+
+        import flash.display.Bitmap;
+
+        import mx.collections.ArrayCollection;
+        import mx.events.CollectionEvent;
+
+        import stream.OtherVideo;
+        import stream.OwnVideo;
+
+        //vars
+        private var socket:SocketIO;
+
+        private var bmpdata:Raster;
+
+        private var bmp:Bitmap;
+
+        private var overlaybmpdata:Raster;
+
+        private var overlaybmp:Bitmap;
+
+        public var username:String;
+
+        public var password:String;
+
+        private var oldx:uint;
+
+        private var oldy:uint;
+
+        private var othervideosprite:OtherVideo;
+
+        private var ownStreamSprite:OwnVideo;
+
+        private var tool:String;
+
+        [Bindable]
+        private var data:ArrayCollection = new ArrayCollection;
+
+        /**
+         * contructor / entry-point for the main-application
+         *
+         * method is called wenn mxml-elemts are set up.
+         * waits for the login-data and then sets up all the components of
+         * the main-application.
+         */
+        public function onCreationComplete():void {
+            bmpdata = new Raster(600, 400, false, 0xffffff);
+            while (username == null || password == null) {
+                trace("waiting for username + password");
+            }
+            socket = new SocketIO(username, password, bmpdata);
+            password = null;
+            bmpdata.setSocket(socket);
+            bmp = new Bitmap(bmpdata);
+            uicomp.addChild(bmp);
+            uicomp.addEventListener(MouseEvent.MOUSE_DOWN, onMouseDown);
+            tool = "pencil";
+            overlaybmpdata = new Raster(600, 400, true, 0x00ffffff);
+            overlaybmpdata.setSocket(socket);
+            overlaybmp = new Bitmap(overlaybmpdata);
+            uicomp.addChild(overlaybmp);
+            othervideosprite = OtherVideo.getInstance();
+            othervideo.addChild(othervideosprite);
+            othervideosprite.visible = false;
+            socket.addEventListener(FailEvent.FAIL, onFail);
+            socket.addEventListener(IncomingMessageEvent.MSG, onNewMessage);
+            socket.addEventListener(UserLogInOutEvent.LOGIN, onNewUser);
+            socket.addEventListener(UserLogInOutEvent.LOGOUT, onUserLeave);
+            chatinput.addEventListener(KeyboardEvent.KEY_DOWN, onChatInputKeyDown);
+            socket.addEventListener(StreamOnOffEvent.ON, onStreamOn);
+            socket.addEventListener(StreamOnOffEvent.OFF, onStreamOff);
+            data.addItem(new User(this.username, "N/A"));
+            chatinput.setFocus();
+        }
+
+        /**
+         * handles the event when server tells us, that one of the connected
+         * clients is available for streaming
+         *
+         * sets "available"-status in list-component
+         */
+        private function onStreamOn(event:StreamOnOffEvent):void {
+            for (var i:int = 0; i < list.dataProvider.length; i++) {
+                if (data.getItemAt(i).username == event.info) {
+                    data.getItemAt(i).stream = "available";
+                    data.getItemAt(i).color = "0x00cc00";
+                }
+            }
+        }
+
+        /**
+         * handles the event when server tells us, that one of the connected
+         * clients is no longer available for streaming.
+         *
+         * sets "N/A"-status in list-component
+         */
+        private function onStreamOff(event:StreamOnOffEvent):void {
+            for (var i:int = 0; i < list.dataProvider.length; i++) {
+                if (data.getItemAt(i).username == event.info) {
+                    data.getItemAt(i).stream = "N/A";
+                    data.getItemAt(i).color = "0xcc0000";
+                }
+            }
+        }
+
+        /**
+         * called when user starts his/her own stream.
+         * sets up a new OwnVideo-sprite adds it to the stage and
+         * registers an eventhandler for when stream should be closed again.
+         *
+         */
+        private function onStartOwnStream(event:MouseEvent):void {
+            ownvideo.visible = true;
+            ownStreamSprite = new OwnVideo(username);
+            ownvideo.addChild(ownStreamSprite);
+            ownStreamSprite.addEventListener(OwnVideoFailEvent.FAIL, onFailOwnStream);
+            ownStreamSprite.addEventListener(MouseEvent.CLICK, onStopOwnStream);
+            ownStreamSprite.addEventListener(OwnVideoWinEvent.WIN, onOwnStreamSuccess);
+        }
+
+        /**
+         * called when webcam is really actually streamed and successfully to the server
+         */
+        private function onOwnStreamSuccess(event:OwnVideoWinEvent):void {
+            //send info about own stream to everybody else
+            socket.send("wcstron|" + username + "\n");
+            //resets button if streaming attempt has failed once before
+            ownstreambtn.setStyle("color", "0x000000");
+            ownstreambtn.label = "publish your webcam!";
+        }
+
+        /**
+         * called when something went wrong with streaming our webcam to the server
+         * shows error-message as button-label in red.
+         * resets the video and removes it from the stage
+         */
+        private function onFailOwnStream(event:OwnVideoFailEvent):void {
+            ownstreambtn.setStyle("color", "0xff0000");
+            ownstreambtn.label = event.kindOfFail;
+            ownStreamSprite.cleanup();
+            ownvideo.visible = false;
+            ownStreamSprite.removeEventListener(MouseEvent.CLICK, onStopOwnStream);
+        }
+
+        /**
+         * called when user stops his/her own stream.
+         * removes OwnVideo-sprite and removes the eventlistener from which it is beeing called
+         *
+         */
+        private function onStopOwnStream(event:MouseEvent):void {
+            ownvideo.visible = false;
+            ownStreamSprite.removeEventListener(MouseEvent.CLICK, onStopOwnStream);
+            ownStreamSprite.cleanup();
+            socket.send("wcstroff|" + username + "\n");
+        }
+
+        /**
+         * called when a user logs in.
+         * adds User to user-list.
+         */
+        private function onNewUser(event:UserLogInOutEvent):void {
+            data.addItem(new User(event.username, "N/A"));
+        }
+
+        /**
+         * called when a user logs out.
+         * removes User from userlist.
+         */
+        private function onUserLeave(event:UserLogInOutEvent):void {
+            for (var i:int = 0; i < list.dataProvider.length; i++) {
+                if (data.getItemAt(i).username == event.username) {
+                    data.removeItemAt(i);
+                }
+            }
+        }
+
+        /**
+         * called when we receive a new message.
+         * adds message to the chat-component.
+         */
+        private function onNewMessage(event:IncomingMessageEvent):void {
+            chat.appendText(getTimeStampFormated(event.timestamp) + " " + getAuthorFormated(event.author) + ": " + event.message + "\n");
+        }
+
+        /**
+         * called when we hit the enter-key in the chat-input-field.
+         * message get passed on to the socket and gets removed from the input-field
+         */
+        private function onChatInputKeyDown(event:KeyboardEvent):void {
+            if (event.keyCode == 13) {
+                if (chatinput.text.length != 0) {
+                    socket.send("m|" + chatinput.text + "\n");
+                    chat.appendText(getTimeStampFormated(new Date()) + " " + getAuthorFormated(username) + ": " + chatinput.text + "\n");
+                    chatinput.text = "";
+                }
+            }
+        }
+
+        /**
+         * called when we hit "send!"-button.
+         * message get passed on to the socket and gets removed from the input-field.
+         */
+        private function onSendButtonClick(event:Event):void {
+            if (chatinput.text.length != 0) {
+                socket.send("m|" + chatinput.text + "\n");
+                chat.appendText(getTimeStampFormated(new Date()) + " " + getAuthorFormated(username) + ": " + chatinput.text + "\n");
+                chatinput.text = "";
+            }
+        }
+
+        /**
+         * formats the string with the author-name in it and
+         * returns that string with 12 chars
+         *
+         * @param author    name of the author as a string
+         *
+         * @return            the name of the author as a string with 12 chars
+         */
+        private function getAuthorFormated(author:String):String { //returns authorname with 12 chars
+            for (var i:int = author.length; i < 12; i++) {
+                author = author + " ";
+            }
+            return author;
+        }
+
+        /**
+         * formats a date-object as a string
+         *
+         * @param date        date-object thats supposed to be formated
+         *
+         * @return            the formated Date as a string
+         */
+        private function getTimeStampFormated(date:Date):String { //returns fomatted timestamp HH/MM/SS
+            var datef:String;
+            if (date.getHours() < 10) {
+                datef = "0" + date.getHours();
+            }
+            else {
+                datef = "" + date.getHours();
+            }
+            datef = datef + ":";
+            if (date.getMinutes() < 10) {
+                datef = datef + "0" + date.getMinutes();
+            }
+            else {
+                datef = datef + date.getMinutes();
+            }
+            datef = datef + ":";
+            if (date.getSeconds() < 10) {
+                datef = datef + "0" + date.getSeconds();
+            }
+            else {
+                datef = datef + date.getSeconds();
+            }
+            return datef;
+        }
+
+        /**
+         * called when something goes wrong in the main-application
+         * resets everything and switches back to the login-state.
+         * an error-message is beeing passed from the event that can be displayed on the login site.
+         */
+        private function onFail(event:FailEvent):void {
+            //cleanup
+            if (bmp != null) {
+                uicomp.removeChild(bmp);
+            }
+            bmpdata = null;
+            socket = null;
+            bmp = null;
+            username = null;
+            password = null;
+            chatinput.text = "";
+            chat.text = "";
+            colorPicker.selectedColor = 0x000000;
+            if (ownStreamSprite != null) {
+                try {
+                    ownStreamSprite.removeEventListener(MouseEvent.CLICK, onStopOwnStream);
+                    ownStreamSprite.cleanup();
+                    ownvideo.removeChild(ownStreamSprite);
+                    othervideo.removeChild(othervideosprite);
+                }
+                catch (e:Error) {
+                    trace("gnaaarr" + e.message);
+                }
+            }
+            list.dataProvider.removeAll();
+            ownstreambtn.setStyle("color", "0x000000");
+            ownstreambtn.label = "publish your webcam!";
+            selectPencil();
+            uicomp.removeEventListener(MouseEvent.MOUSE_DOWN, onMouseDown);
+            dispatchEvent(new FailEvent(FailEvent.FAIL, event.kindOfFail));
+        }
+
+        /**
+         * handles mouse-downs on the canvas-component depending on the selected tool.
+         */
+        private function onMouseDown(event:MouseEvent):void {
+            if (tool == "pencil") {
+                bmpdata.setPixelProxy(mouseX - canvascontainer.x, mouseY - canvascontainer.y, colorPicker.selectedColor, true);
+                stage.addEventListener(MouseEvent.MOUSE_MOVE, onMouseMove);
+                stage.addEventListener(MouseEvent.MOUSE_UP, onMouseUp);
+            }
+            else if (tool == "circle") {
+                stage.addEventListener(MouseEvent.MOUSE_MOVE, onMouseMoveCircle);
+                stage.addEventListener(MouseEvent.MOUSE_UP, onMouseUpCircle);
+            }
+            else if (tool == "rect") {
+                stage.addEventListener(MouseEvent.MOUSE_MOVE, onMouseMoveRect);
+                stage.addEventListener(MouseEvent.MOUSE_UP, onMouseUpRect);
+            }
+            oldx = mouseX - canvascontainer.x;
+            oldy = mouseY - canvascontainer.y;
+        }
+
+        /**
+         * handles mouse-move events while in circle-tool-mode
+         */
+        private function onMouseMoveCircle(event:MouseEvent):void {
+            //clear screen
+            overlaybmpdata.fillRect(new Rectangle(0, 0, overlaybmpdata.width, overlaybmpdata.height), 0x00000000);
+            //draw new circle
+            overlaybmpdata.circle(oldx, oldy, Math.sqrt(Math.pow(oldx - (mouseX - canvascontainer.x), 2) + Math.pow(oldy - (mouseY - canvascontainer.y), 2)), 0xff000000 + colorPicker.selectedColor, false);
+        }
+
+        /**
+         * handles mouse-up events while in circle-tool-mode
+         */
+        private function onMouseUpCircle(event:MouseEvent):void {
+            //clear stage
+            overlaybmpdata.fillRect(new Rectangle(0, 0, overlaybmpdata.width, overlaybmpdata.height), 0x00000000);
+            //dispense listeners
+            stage.removeEventListener(MouseEvent.MOUSE_MOVE, onMouseMoveCircle);
+            stage.removeEventListener(MouseEvent.MOUSE_UP, onMouseUpCircle);
+            //draw on the right canvas
+            bmpdata.circle(oldx, oldy, Math.round(Math.sqrt(Math.pow(oldx - (mouseX - canvascontainer.x), 2) + Math.pow(oldy - (mouseY - canvascontainer.y), 2))), colorPicker.selectedColor, false);
+            //send it to the server
+            socket.send("c|" + oldx + "|" + oldy + "|" + Math.round(Math.sqrt(Math.pow(oldx - (mouseX - canvascontainer.x), 2) + Math.pow(oldy - (mouseY - canvascontainer.y), 2))) + "|" + Utils.getNumberAsHexString(colorPicker.selectedColor, 6) + "|\n");
+        }
+
+        /**
+         * handles mouse-move events while in rectangle-tool-mode
+         */
+        private function onMouseMoveRect(event:MouseEvent):void {
+            //clear screen
+            overlaybmpdata.fillRect(new Rectangle(0, 0, overlaybmpdata.width, overlaybmpdata.height), 0x00000000);
+            //draw new circle
+            overlaybmpdata.drawRect(oldx, oldy, mouseX - canvascontainer.x, mouseY - canvascontainer.y, 0xff000000 + colorPicker.selectedColor);
+            //overlaybmpdata.circle(oldx, oldy, Math.sqrt(Math.pow(oldx - (mouseX - canvascontainer.x), 2) + Math.pow(oldy - (mouseY - canvascontainer.y), 2)), 0xff000000 + colorPicker.selectedColor, false);
+        }
+
+        private function onMouseUpRect(event:MouseEvent):void {
+            //clear stage
+            overlaybmpdata.fillRect(new Rectangle(0, 0, overlaybmpdata.width, overlaybmpdata.height), 0x00000000);
+            //dispense listeners
+            stage.removeEventListener(MouseEvent.MOUSE_MOVE, onMouseMoveRect);
+            stage.removeEventListener(MouseEvent.MOUSE_UP, onMouseUpRect);
+            //draw on the right canvas
+            bmpdata.drawRect(oldx, oldy, mouseX - canvascontainer.x, mouseY - canvascontainer.y, colorPicker.selectedColor);
+            //send it to the server
+            socket.send("r|" + oldx + "|" + oldy + "|" + (mouseX - canvascontainer.x) + "|" + (mouseY - canvascontainer.y) + "|" + Utils.getNumberAsHexString(colorPicker.selectedColor, 6) + "|\n");
+        }
+
+        /**
+         * handles the end of a user-input via mouse on the canvas-component
+         */
+        private function onMouseUp(event:MouseEvent):void {
+            try {
+                stage.removeEventListener(MouseEvent.MOUSE_MOVE, onMouseMove);
+            }
+            catch (e:Error) {
+            }
+        }
+
+        /**
+         * handles user-input via mouse on the canvas-component while mouse-button is pushed
+         */
+        private function onMouseMove(event:MouseEvent):void {
+            //todo color variable setzen
+            bmpdata.line(oldx, oldy, mouseX - canvascontainer.x, mouseY - canvascontainer.y, colorPicker.selectedColor, false);
+            //drawDot(mouseX,mouseY);
+            oldx = mouseX - canvascontainer.x;
+            oldy = mouseY - canvascontainer.y;
+        }
+
+        /**
+         * handles user-input when tool component is clicked
+         */
+        private function selectPencil():void {
+            tool = "pencil";
+            selectedoverlay.y = 30;
+        }
+
+        /**
+         * handles user-input when tool component is clicked
+         */
+        private function selectCircle():void {
+            tool = "circle";
+            selectedoverlay.y = 58;
+        }
+
+        /**
+         * handles user-input when tool component is clicked
+         */
+        private function selectRect():void {
+            tool = "rect";
+            selectedoverlay.y = 86;
+        }
+        ]]>
+	</fx:Script>
+    <fx:Declarations>
+        <!-- Place non-visual elements (e.g., services, value objects) here -->
+    </fx:Declarations>
+    <s:BorderContainer borderColor="0x000000"
+                       borderStyle="solid"
+                       borderWeight="1"
+                       x="5"
+                       y="5"
+                       height="402"
+                       width="602"
+                       id="canvascontainer">
+        <mx:UIComponent id="uicomp"
+                        height="400"
+                        width="600"
+                        x="0"
+                        y="0">
+        </mx:UIComponent>
+    </s:BorderContainer>
+    <mx:Image x="612"
+              y="410"
+              source="@Embed('selectstream.png')"
+              height="145"
+              width="197"/>
+    <s:Button x="410"
+              y="410"
+              label="publish your webcam!"
+              width="197"
+              height="145"
+              id="ownstreambtn"
+              click="onStartOwnStream(event)"
+              fontFamily="Arial"/>
+    <mx:UIComponent id="othervideo"
+                    height="145"
+                    width="197"
+                    x="612"
+                    y="410">
+    </mx:UIComponent>
+    <s:TextInput x="5"
+                 y="535"
+                 width="325"
+                 id="chatinput"
+                 height="20"/>
+    <s:Button x="335"
+              y="535"
+              label="send!"
+              click="onSendButtonClick(event)"
+              height="20"/>
+    <mx:ColorPicker id="colorPicker"
+                    x="610"
+                    y="5"/>
+    <s:TextArea x="5"
+                y="410"
+                width="400"
+                id="chat"
+                editable="false"
+                height="120"/>
+    <mx:UIComponent id="ownvideo"
+                    height="145"
+                    width="195"
+                    x="410"
+                    y="410">
+    </mx:UIComponent>
+    <s:List id="list"
+            x="635"
+            y="5"
+            width="175"
+            height="402"
+            dataProvider="{data}"
+            borderColor="#000000"
+            borderVisible="true">
+        <s:itemRenderer>
+            <fx:Component>
+                <s:ItemRenderer>
+                    <fx:Script>
+						<![CDATA[
+                        import flash.events.EventDispatcher;
+
+                        import stream.OtherVideo;
+
+                        private function onUserClicked(event:Event):void {
+                            OtherVideo.getInstance().play(event.target.name);
+                            OtherVideo.getInstance().visible = true;
+                        }
+                        ]]>
+					</fx:Script>
+                    <s:states>
+                        <s:State name="normal"/>
+                        <s:State name="hovered"/>
+                        <s:State name="selected"/>
+                    </s:states>
+                    <s:Rect left="0"
+                            right="0"
+                            top="0"
+                            bottom="0">
+                        <s:fill>
+                            <s:SolidColor color="0x999999"
+                                          alpha="0"
+                                          alpha.hovered="0.2"
+                                          alpha.selected="0.6"/>
+                        </s:fill>
+                    </s:Rect>
+                    <s:Label id="namelabel"
+                             text="{data.username}"
+                             top="5"
+                             left="5"
+                             right="5"/>
+                    <s:Label id="streamlabel"
+                             y="20"
+                             backgroundColor="{data.color}"
+                             text="{data.stream}"
+                             name="{data.username}"
+                             includeIn="selected"
+                             top="20"
+                             bottom="2"
+                             left="2"
+                             right="2"
+                             click="onUserClicked(event)"/>
+                </s:ItemRenderer>
+            </fx:Component>
+        </s:itemRenderer>
+    </s:List>
+    <mx:Image x="609"
+              y="30"
+              source="@Embed('pencil.png')"
+              width="24"
+              height="24"
+              click="selectPencil()"/>
+    <mx:Image x="609"
+              y="58"
+              source="@Embed('circle.png')"
+              width="24"
+              height="24"
+              click="selectCircle()"/>
+    <mx:Image x="609"
+              y="86"
+              source="@Embed('rect.png')"
+              width="24"
+              height="24"
+              click="selectRect()"/>
+    <mx:Image x="609"
+              y="30"
+              source="@Embed('selectedoverlay.png')"
+              width="24"
+              height="24"
+              id="selectedoverlay"/>
+</s:BorderContainer>
